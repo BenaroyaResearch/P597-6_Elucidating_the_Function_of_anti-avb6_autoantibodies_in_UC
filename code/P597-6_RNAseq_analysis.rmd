@@ -1,0 +1,1179 @@
+---
+title: "P597-6_Elucidating_the_Function_of_anti-avb6_autoantibodies_in_UC"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+editor_options: 
+  chunk_output_type: console
+date: "2025-06-24"
+---
+
+
+# Project Description
+
+[description goes here]
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE, results = "hide"}
+library(knitr)
+opts_chunk$set(
+  fig.width = 6, fig.height = 4.25, cache = TRUE,
+  echo = FALSE, warning = FALSE, message = FALSE)
+options(stringsAsFactors = FALSE)
+library(dplyr)
+library(ggplot2)
+library(ggVennDiagram) # for making the diagram
+library(gplots) # for retrieving the lists
+library(lintr)
+# linters <- linters_with_defaults(
+#   assignment_linter = NULL,
+#   line_length_linter(120)
+# )
+# lint(filename, linters = linters)
+theme_set(
+  theme_bw(base_size = 14) +
+    theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(colour = "black", fill = NA, size = 1),
+      axis.text = element_text(colour = "black"),
+      axis.ticks = element_line(colour = "black"),
+      legend.key = element_blank(),
+      strip.text.x = element_text(size = 14, margin = margin(b = 2, t = 2)),
+      strip.background = element_rect(fill = "white", colour = "black")))
+library(ggrepel)
+options(ggrepel.max.overlaps = Inf)
+library(miscHelpers)
+library(annotables)
+library(apird)
+library(magrittr)
+library(readxl)
+library(tidyverse)
+# library(Seurat)
+# library(SeuratWrappers)
+# library(monocle3)
+library(ggbeeswarm)
+library(stringr)
+library(kableExtra)
+library(gtools)
+library(inlmisc) # For colors
+library(data.table)
+library(RNAseQC)
+# library(SingleCellExperiment)
+library(plotscale)
+library(gtable)
+library(grid)
+library(ggh4x)
+# library(concaveman)
+# library(ggforce)
+# library(gghighlight)
+library(ComplexHeatmap)
+library(limma)
+library(edgeR)
+library(caret)
+library(scales)
+# library(CDI) # this is a development version
+# library(clusterSim) # for clustering quality evaluation functions (DB, CH, etc)
+library(tictoc)
+library(foreach)
+library(doParallel)
+library(viridis)
+library(viridisLite)
+library(GGally)
+library(RColorBrewer)
+library(pals)
+library(plotly)
+library(ggpmisc)
+library(haven)
+library(circlize)
+library(ggvenn)
+library(ggnewscale)
+library(msigdbr)
+library(clusterProfiler)
+library(enrichplot)
+library(openxlsx)
+library(paletteer)
+library(genekitr)
+```
+
+```{r set_up_directories, cache = TRUE}
+baseDir <- "/Users/tedwards/Documents/projects/P597-6_Elucidating_the_Function_of_anti-avb6_autoantibodies_in_UC"
+outputDataDir <- file.path(baseDir, "data/outputData")
+inputDataDir <- file.path(baseDir, "data/inputData")
+plotDir <- file.path(baseDir, "figures")
+
+dataDate <- "2025-06-24" # yyyy-mm-dd
+
+filenameSuffix <- paste0("P597_6_", dataDate)
+```
+
+```{r import_data}
+# load the sequencing data
+# Use apird function to get project data
+# project <- "P597-6"
+
+# # getGcqProjectInfo(project)
+# libids <- getProjectLibs(project, searchType = "regex")
+
+# # retrieve data
+# anno <- getAnno(libids)
+# metrics <- getMetrics(libids)
+# counts <- getGeneCounts(libids)
+
+# # Save for offline analysis
+# save(anno,
+#   metrics,
+#   counts,
+#   file = file.path(inputDataDir, "P597_6_Data.Rdata"))
+
+load(file.path(inputDataDir, "P597_6_Data.Rdata"))
+
+
+# load in gene modules
+# geneModules <-
+#   read_excel(file.path(inputDataDir, "P597_geneModules.xlsx")) %>%
+#   data.frame()
+```
+
+```{r cleanGenomicsData}
+# fix column names
+anno <- anno %>%
+  dplyr::rename(sampleName = sample_name,
+    sampleId = sample_id)
+
+
+# replace spaces with underscores, remove hyphens
+anno$sampleName <- gsub("-", "", gsub("[[:space:]]+", "_", anno$sampleName))
+anno$treatment <- gsub("-", "", gsub("[[:space:]]+", "_", anno$treatment))
+anno$project <- gsub("-", "", gsub("[[:space:]]+", "_", anno$project))
+anno$cellType <- gsub("-", "", gsub("[[:space:]]+", "_", anno$cellType))
+
+# replace "TNFa_TGFb" with "TNFa_antiTGFb" in anno$treatment
+anno$treatment <- gsub("TNFa_TGFb", "TNFa_antiTGFb", anno$treatment)
+
+# make factors
+anno$treatment <- factor(anno$treatment)
+
+# make $stimulation where $IL4* maps to "IL4", "IL4_IL17*" maps to "IL4_IL17", "TNFa*" maps to "TNFa", "TNFa_IL17*" maps to "TNFa_IL17", and "NoTx" is "noStim",
+# accounting for the conflicts between the IL17/non-IL17 stims
+anno$stimulation <- case_when(
+  str_detect(anno$treatment, "^IL4_IL17") ~ "IL4_IL17",
+  str_detect(anno$treatment, "^TNFa_IL17") ~ "TNFa_IL17",
+  str_detect(anno$treatment, "^IL4") ~ "IL4",
+  str_detect(anno$treatment, "^TNFa") ~ "TNFa",
+  anno$treatment == "NoTx" ~ "noStim",
+  TRUE ~ as.character(anno$treatment)  # fallback for any other treatments
+)
+
+# join annotations with metrics
+annotatedMetrics <- dplyr::full_join(anno, metrics, by = c("libid"))
+
+# transpose counts matrix
+counts <- t(counts)
+
+# fix the libids
+colnames(counts) <- sub("_.*", "", colnames(counts))
+```
+
+```{r setupPalettes}
+# treatment
+
+# colors from palettesForR::Tango
+palTreatment <- c("IL4" = "#FCAF3EFF",
+  "IL4_3G9" = "#F57900FF",
+  "IL4_antiTGFb" = "#CE5C00FF",
+  "IL4_IL17" = "#729FCFFF",
+  "IL4_IL17_3G9" = "#3465A4FF",
+  "IL4_IL17_antiTGFb" = "#204A87FF",
+  "TNFa" = "#AD7FA8FF",
+  "TNFa_3G9" = "#75507BFF",
+  "TNFa_antiTGFb" = "#5C3566FF",
+  "TNFa_IL17" = "#EF2929FF",
+  "TNFa_IL17_3G9" = "#CC0000FF",
+  "TNFa_IL17_antiTGFb" = "#A40000FF",
+  "NoTx" = "grey")
+
+palStimulation <- c("IL4" = "#F57900FF",
+  "IL4_IL17" = "#3465A4FF",
+  "TNFa" = "#75507BFF",
+  "TNFa_IL17" = "#CC0000FF",
+  "noStim" = "grey")
+```
+
+
+```{r setQCCuts}
+# Set QC cuts
+alignCut <- 80 # 70
+totalReadsCut <- 0.5
+medianCVCut <- 0.8
+
+annotatedMetrics$qcPass <- annotatedMetrics$fastq_total_reads > totalReadsCut * 10^6 & # require more than 500,000 total reads
+  annotatedMetrics$pct_aligned > alignCut & # require 80 percent alignment or better
+  annotatedMetrics$median_cv_coverage < medianCVCut
+```
+
+
+```{r qcplots_total_reads, fig.width=7, fig.height=3.5}
+# Make a barplot of total reads. Arrange libraries from lowest number of reads to highest.
+gTotReads.tmp <- ggplot(data = annotatedMetrics,
+  aes(x = reorder(libid, fastq_total_reads),
+    y = fastq_total_reads / 10^6,
+    fill = treatment)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = totalReadsCut) +
+  scale_fill_manual(values = palTreatment) +
+  labs(x = "Library", y = "Total reads in millions", fill = "") +
+  theme(text = element_text(size = 12)) +
+  theme(axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()) #+
+#   facet_wrap(~cellType)
+
+pdf(
+  gTotReads.tmp,
+  file = file.path(plotDir,
+    paste0(dataDate, "_TotalReads.pdf")),
+  height = 4,
+  width = 10
+)
+
+print(gTotReads.tmp)
+
+invisible(dev.off())
+rm_tmp(ask = FALSE)
+```
+
+```{r qc_cut_plot, fig.width=6, fig.height=4}
+
+annotatedMetrics$median_cv_coverage <- as.numeric(annotatedMetrics$median_cv_coverage)
+
+gPctAligned.tmp <- ggplot(data = annotatedMetrics) +
+  geom_point(aes(x = median_cv_coverage,
+    y = pct_aligned,
+    color = treatment),
+  size = 1.5) +
+  scale_color_manual(values = palTreatment) +
+  labs(x = "Median CV coverage",
+    y = "Percent alignment",
+    color = "") +
+  geom_hline(yintercept = alignCut) +
+  geom_vline(xintercept = medianCVCut) +
+  ylim(c(0, 100)) +
+  theme(text = element_text(size = 12))
+
+pdf(
+  gPctAligned.tmp,
+  file = file.path(plotDir,
+    paste0(dataDate, "MedianCVvsPctAligned.pdf")),
+  height = 5,
+  width = 7
+)
+print(gPctAligned.tmp)
+
+invisible(dev.off())
+rm_tmp(ask = FALSE)
+```
+
+```{r make_qc_cuts}
+annotatedMetricsQC <- annotatedMetrics %>%
+  dplyr::filter(qcPass == TRUE)
+
+countsQC <- counts[, colnames(counts) %in% annotatedMetricsQC$libid]
+
+# Make sure libraries in counts and metrics are in the same order
+libOrder <- match(colnames(countsQC), annotatedMetricsQC$libid)
+annotatedMetricsQC <- annotatedMetricsQC[libOrder, ]
+
+pctPassQC <- round(nrow(annotatedMetricsQC) / nrow(annotatedMetrics) * 100)
+```
+
+```{r qc_failures, results = "asis"}
+failedSamples <- annotatedMetrics %>%
+  dplyr::filter(qcPass == FALSE) %>%
+  dplyr::select(libid,
+    sampleName) %>%
+  dplyr::arrange(libid,
+    sampleName)
+
+failedSamples %>%
+  kable(row.names = F) %>%
+  kable_styling("striped",
+    full_width = F,
+    position = "left") %>%
+  scroll_box(height = "800px")
+```
+
+```{r gene_filtering}
+## Keep protein coding genes with HGNC symbols, and drop non-protein-coding genes
+
+## This chunk avoids an issue with the annotables update. consider cleaning up/elegantizing.
+v38 <- annotables::grch38
+pc38 <- v38[v38$biotype == "protein_coding", ] # grab protein coding
+pcWithNoSymbol <- pc38[pc38$symbol == "", ] # protein coding that have no symbol
+pcWithSymbol <- pc38[pc38$symbol != "", ] # get the protein coding entries that have symbols
+countsWithSymbol <- countsQC[rownames(countsQC) %in% pcWithSymbol$ensgene, ] # make a counts matrix that is protein coding and has symbol
+
+countsTmp <- countsQC[rownames(countsQC) %in% pcWithSymbol$ensgene, ]
+countsTmp <- as.data.frame(countsTmp)
+countsTmp$gene <- pcWithSymbol$symbol[match(rownames(countsTmp), pcWithSymbol$ensgene)]
+countsTmp <- as.data.table(countsTmp)
+
+countsPC <-
+  countsTmp[
+    , lapply(.SD, sum), by = gene, .SDcols = grep("^lib", colnames(countsTmp), value = TRUE)] %>%
+  arrange(gene) %>%
+  dplyr::filter(gene != "MTRNR2L1") %>% # exclude MTRNR2L1 # THE I don't yet know why we'd exclude a gene TODO understand
+  as.data.frame() %>%
+  magrittr::set_rownames(., value = .$gene)
+
+countsPC <- countsPC[, -which(colnames(countsPC) == "gene")]
+
+# dim(counts_pc)
+## filter lowly expressed genes
+
+# Define a function to filter out lowly expressed genes at least 1 cpm in 10% of libraries (default)
+gene_filter <- function(counts_in,
+                        per_cutoff = 0.1,
+                        counts_cutoff = 1) {
+  # Keep genes with cpm of at least counts_cutoff in at least per_cutoff fraction of libraries
+  # CPM normalize
+  counts_cpm_norm <- as.data.frame(t(t(counts_in * 10^6) / colSums(counts_in)))
+
+  # Filter out lowly expressed genes
+  keepRows <- rowSums((counts_cpm_norm) >= counts_cutoff) >= per_cutoff * ncol(counts_cpm_norm)
+  counts_filtered <- counts_in[keepRows, ]
+
+  return(counts_filtered)
+
+}
+
+# Run function to filter lowly expressed genes
+# counts_all_filtered <- gene_filter(counts_hgnc, 0.10) #all genes with HGNC symbols
+countsPCFiltered <- gene_filter(countsPC, 0.1, 1)
+
+normalize_counts <- function(counts_in, method) {
+  # normalize using tmm or deconvolution
+  # tmm is good for bulk RNAseq
+  # deconvolution is best for large datasets of single cell RNAseq
+  # deconvolution is NOT recommended for smaller datasets (less than a few hundred cells)
+
+  if (method == "decon") {
+    # Normalize using the deconvolution algorithm
+    # Normalize using the deconvolution algorithm
+    sce <- SingleCellExperiment(assays = SimpleList(counts = as.matrix(counts_in)))
+    sce <- scran::computeSumFactors(sce)
+    sce <- scater::logNormCounts(sce)
+    # counts_norm <- as.data.frame(t(t(counts_in)/decon_norm_factors))
+    counts <- assay(sce)
+    libsizes <- colSums(counts)
+    size.factors <- libsizes / mean(libsizes)
+    counts_norm <- as.data.frame(t(t(counts) / size.factors))
+
+    # Deprecated approach. Does not work in R version >4
+    # decon_norm_factors <- computeSumFactors(as.matrix(counts_in))
+    # counts_norm <- as.data.frame(t(t(counts_in)/decon_norm_factors))
+  }
+
+  if (method == "tmm") {
+    # Normalize using the TMM algorithm
+    dge <- DGEList(counts_in)
+    dge <- calcNormFactors(dge)
+    counts_norm <- edgeR::cpm(dge, normalized.lib.sizes = TRUE)
+  }
+
+  return(counts_norm)
+
+}
+
+
+countsPCNorm <- normalize_counts(countsPCFiltered, "tmm")
+# counts_all_norm <- normalize_counts(counts_all_filtered, "tmm")
+
+# Create a dataframe of gene names to attach to the DGEList(). Keep both ensembl_gene_id, and hgnc_symbol
+fgenes  <- pcWithSymbol[match(rownames(countsPCNorm), pcWithSymbol$ensgene), c("ensgene", "symbol")]
+dge <- DGEList(counts = countsPCNorm, genes = fgenes)
+
+# Write out normalized counts
+# Add HGNC symbols to gene names
+# log 2 transform
+
+countsOut <- log2(countsPCNorm + 1)
+
+write.csv(countsOut, file.path(outputDataDir, "Deconvolution_normalized_log2_transformed_counts.csv"), quote = FALSE, row.names = TRUE)
+```
+
+```{r saveDataAfterQC}
+# save workspace as an .Rdata file
+save.image(file = file.path(outputDataDir, "workspace_after_QC.Rdata"))
+```
+
+```{r pca_all, dependson="pca_plotting_func", fig.width=9, fig.height=4}
+png_res <- 600
+
+# Run PCA on the normalized log2 transformed counts data
+dat <- log2(as.data.frame(t(dge$counts)) + 0.5)
+pca <- prcomp(log2(as.data.frame(t(countsPCNorm)) + 1), center = TRUE, scale = FALSE)
+
+# Compute correlations between PCs and annotatedMetrics variables
+pcCors <- calc_PCcors(pca, annotatedMetricsQC, id_col = "libid") %>%
+  t()
+sum_pca <- summary(pca)
+pca_scores <- as.data.frame(pca$x)
+pdatscores <- merge(annotatedMetricsQC, pca_scores, by.x = "libid", by.y = "row.names")
+pc1_lab <- paste("PC1 (", round(100 * sum_pca$importance[2, 1], 1),  "%)", sep = "")
+pc2_lab <- paste("PC2 (", round(100 * sum_pca$importance[2, 2], 1),  "%)", sep = "")
+pc3_lab <- paste("PC3 (", round(100 * sum_pca$importance[2, 3], 1),  "%)", sep = "")
+pc4_lab <- paste("PC4 (", round(100 * sum_pca$importance[2, 4], 1),  "%)", sep = "")
+pc5_lab <- paste("PC5 (", round(100 * sum_pca$importance[2, 5], 1),  "%)", sep = "")
+pc6_lab <- paste("PC6 (", round(100 * sum_pca$importance[2, 6], 1),  "%)", sep = "")
+
+png(filename = file.path(plotDir, paste0("PCA1v2_treatment.", filenameSuffix, ".png")),
+  width = 6, height = 5, units = "in", res = 300)
+
+plot.tmp <- ggplot(pdatscores, aes(x = PC1, y = PC2, color = treatment)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = palTreatment) +
+  labs(color = "treatment", x = pc1_lab, y = pc2_lab)
+
+print(plot.tmp)
+dev.off()
+rm_tmp(ask = FALSE)
+
+png(filename =
+  file.path(
+    plotDir,
+    paste0("PCA2v3_treatment.", filenameSuffix, ".png")),
+width = 6, height = 5,
+units = "in",
+res = 300)
+plot.tmp <- ggplot(pdatscores, aes(x = PC2, y = PC3, color = treatment)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = palTreatment) +
+  labs(color = "cellType") +
+  labs(x = pc2_lab, y = pc3_lab)
+print(plot.tmp)
+dev.off()
+rm_tmp(ask = FALSE)
+
+png(filename =
+  file.path(
+    plotDir,
+    paste0("PCA3v4_treatment.", filenameSuffix, ".png")),
+width = 6, height = 5,
+units = "in",
+res = 300)
+plot.tmp <- ggplot(pdatscores, aes(x = PC3, y = PC4, color = treatment)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = palTreatment) +
+  labs(color = "cellType") +
+  labs(x = pc2_lab, y = pc3_lab)
+print(plot.tmp)
+dev.off()
+rm_tmp(ask = FALSE)
+```
+
+```{r diffexp_treatment_allSubjects_donor_rand_effect}
+countsPCNorm  <- countsPCNorm[, annotatedMetricsQC$libid]
+
+designMat.treatment <- model.matrix(~ 0 + treatment, data = annotatedMetricsQC)
+colnames(designMat.treatment)  <- stringr::str_remove(colnames(designMat.treatment), "treatment")
+
+print(colnames(designMat.treatment))
+colnames(designMat.treatment) <- make.names(colnames(designMat.treatment))
+
+vwts.treatment  <- voom(countsPCNorm, design = designMat.treatment, plot = TRUE, span = 0.1)
+
+# cor <- duplicateCorrelation(vwts.treatment, designMat.treatment, block = annotatedMetricsQC$libid)
+
+vwts.treatment  <- voom(countsPCNorm,
+  design = designMat.treatment,
+  # correlation = cor$consensus.correlation,
+  plot = TRUE, span = 0.1)
+
+fit.treatment <- lmFit(vwts.treatment,
+  design = designMat.treatment,
+  # block = annotatedMetricsQC$libid,
+  # correlation = cor$consensus.correlation
+)
+
+fit.treatment <- eBayes(fit.treatment)
+
+contrasts.matrix <- makeContrasts(
+  `IL4_vs_NoTx`                  = `IL4` - `NoTx`,
+  `IL4_3G9_vs_NoTx`              = `IL4_3G9` - `NoTx`,
+  `IL4_antiTGFb_vs_NoTx`         = `IL4_antiTGFb` - `NoTx`,
+
+  `IL4_IL17_vs_NoTx`             = `IL4_IL17` - `NoTx`,
+  `IL4_IL17_3G9_vs_NoTx`         = `IL4_IL17_3G9` - `NoTx`,
+  `IL4_IL17_antiTGFb_vs_NoTx`    = `IL4_IL17_antiTGFb` - `NoTx`,
+
+  `TNFa_vs_NoTx`                 = `TNFa` - `NoTx`,
+  `TNFa_3G9_vs_NoTx`             = `TNFa_3G9` - `NoTx`,
+  `TNFa_antiTGFb_vs_NoTx`        = `TNFa_antiTGFb` - `NoTx`,
+
+  `TNFa_IL17_vs_NoTx`            = `TNFa_IL17` - `NoTx`,
+  `TNFa_IL17_3G9_vs_NoTx`        = `TNFa_IL17_3G9` - `NoTx`,
+  `TNFa_IL17_antiTGFb_vs_NoTx`   = `TNFa_IL17_antiTGFb` - `NoTx`,
+
+  levels = designMat.treatment)
+
+fit.treatment_contrasts <- contrasts.fit(fit.treatment, contrasts.matrix)
+
+vfit.treatment_contrasts  <- eBayes(fit.treatment_contrasts, robust = TRUE)
+
+# topTableBaselineVsScreen <- topTable(vfit.treatment_contrasts, coef = "baselineVsScreen", number = Inf, sort.by = "P")
+# topTableBaselineVsScreen$gene <- rownames(topTableBaselineVsScreen) # get genenames from rownames
+
+# p_cutoff <- 0.05
+# logfc_cutoff <- 1
+# sig.genes <- topTableBaselineVsScreen$adj.P.Val <= p_cutoff
+# print(table(sig.genes))
+
+comparisons <- list()
+for (i in 1:ncol(contrasts.matrix)) {
+  compname <- colnames(contrasts.matrix)[i]
+  z <- topTable (vfit.treatment_contrasts, coef = i, number = Inf, sort.by = "P")
+  z$gene <- rownames(z)
+  comparisons[[compname]] <- z
+  print(compname)
+  sigs <- z$adj.P.Val <= 0.05
+  print(table(sigs))
+  write.csv(z, file = file.path(outputDataDir, paste0(compname, "_DE.csv")), row.names = TRUE, quote = FALSE)
+}
+
+list2env(comparisons, envir = .GlobalEnv)
+
+# print a table containing the number of significant DE genes in each contrast, split up by positive/negative logFC
+# Create a table of significant DE genes for each contrast
+sig_table <- do.call(rbind, lapply(names(comparisons), function(comp) {
+  df <- comparisons[[comp]]
+  sig <- df$adj.P.Val <= 0.05
+  up <- sum(sig & df$logFC > 0, na.rm = TRUE)
+  down <- sum(sig & df$logFC < 0, na.rm = TRUE)
+  tot <- up + down
+  data.frame(Contrast = comp,
+    Up = up,
+    Down = down,
+    Total = tot,
+    stringsAsFactors = FALSE)
+}))
+
+# Print the table
+print(sig_table)
+
+# save sig_table as a .csv
+write.csv(sig_table, file = file.path(outputDataDir, "sig_table.csv"), row.names = FALSE)
+```
+
+```{r makeVolcanoPlots}
+# Create a list to store the volcano plots (if needed later)
+volcano_plots <- list()
+
+# Loop over each contrast in your comparisons list
+for (comp in names(comparisons)) {
+  df <- comparisons[[comp]]
+
+  # Compute -log10(P.Value)
+  df <- df %>% mutate(negLogP = -log10(adj.P.Val))
+
+  # Select top 30 genes by smallest adjusted P value
+  top30 <- df %>% arrange(adj.P.Val) %>% slice(1:30)
+  # Only keep those with adj.P.Val <= 0.05
+  top30_sig <- top30 %>% filter(adj.P.Val <= 0.05)
+
+  p <- ggplot(df, aes(x = logFC, y = negLogP)) +
+    geom_point(alpha = 0.5) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey") +
+    # Only label if there are any significant genes
+    {
+      if (nrow(top30_sig) > 0) geom_text_repel(data = top30_sig, aes(label = gene), size = 3, max.overlaps = Inf) else NULL
+    } +
+    labs(title = comp,
+      x = "Log2 Fold Change",
+      y = "-log10(p-value)") +
+    theme_bw()
+
+  volcano_plots[[comp]] <- p
+
+  # Use pdf() to output the plot
+  pdf_filename <- file.path(plotDir, paste0(comp, "_volcano.pdf"))
+  pdf(file = pdf_filename, width = 6, height = 5)
+  print(p)
+  dev.off()
+}
+```
+
+
+# are there responses to these stimuli?
+# IL4 - NoTx
+# IL4_IL17 - NoTx
+# TNFa - NoTx
+# TNFa_IL17 - NoTx
+
+# Do responses to stimuli change with 3G9 (anti-avb6) or anti-TGFb?
+# (IL4 - NoTx) vs (IL4_3G9 - NoTx)
+# (IL4 - NoTx) vs (IL4_antiTGFb - NoTx)
+# (IL4_IL17 - NoTx) vs (IL_IL17_3G9 - NoTx)
+# (IL4_IL17 - NoTx) vs (IL_IL17_antiTGFb - NoTx)
+# (TNFa - NoTx) vs (TNFa_3G9 vs NoTx)
+# (TNFa - NoTx) vs (TNFa_antiTGFb - NoTx)
+# (TNFa_IL17 - NoTx) vs (TNFa_IL17_3G9 - NoTx)
+# (TNFa_IL17 - NoTx) vs (TNFa_IL17_antiTGFb - NoTx)
+
+# Are there any DEGs shared between 3G9 and anti-TGFb?
+# (IL4_3G9 - NoTx) vs (IL4_antiTGFb - NoTx)
+# (IL_IL17_3G9 - NoTx) vs (IL_IL17_antiTGFb - NoTx)
+# (TNFa_3G9 vs NoTx) vs (TNFa_antiTGFb - NoTx)
+# (TNFa_IL17_3G9 - NoTx) vs (TNFa_IL17_antiTGFb - NoTx)
+#  scatterplot for each of these comparisons
+#  Heatmaps of shared DEGs--separate for stim condition
+
+
+
+
+# After we do 2-group vs 2-group analyses, we should really try a 4-way interaction term explicitly modeled
+
+```{r logFCScatterplotsVennDiagrams3G9vsantiTGFbEffect}
+# Define comparison pairs to assess how stimulation signatures change with 3G9 or antiTGFb
+comparison_pairs <- list(
+  list(base = "IL4_vs_NoTx", treat1 = "IL4_3G9_vs_NoTx", treat2 = "IL4_antiTGFb_vs_NoTx",
+    stim = "IL4", label1 = "3G9", label2 = "antiTGFb"),
+  list(base = "IL4_IL17_vs_NoTx", treat1 = "IL4_IL17_3G9_vs_NoTx", treat2 = "IL4_IL17_antiTGFb_vs_NoTx",
+    stim = "IL4_IL17", label1 = "3G9", label2 = "antiTGFb"),
+  list(base = "TNFa_vs_NoTx", treat1 = "TNFa_3G9_vs_NoTx", treat2 = "TNFa_antiTGFb_vs_NoTx",
+    stim = "TNFa", label1 = "3G9", label2 = "antiTGFb"),
+  list(base = "TNFa_IL17_vs_NoTx", treat1 = "TNFa_IL17_3G9_vs_NoTx", treat2 = "TNFa_IL17_antiTGFb_vs_NoTx",
+    stim = "TNFa_IL17", label1 = "3G9", label2 = "antiTGFb")
+)
+
+# Create scatterplots and Venn diagrams for each comparison pair
+for (pair in comparison_pairs) {
+  # Extract comparison data
+  base_comp <- comparisons[[pair$base]]
+  treat1_comp <- comparisons[[pair$treat1]]
+  treat2_comp <- comparisons[[pair$treat2]]
+
+  # === SCATTERPLOT 1: treat1 vs treat2 ===
+  # Merge the two treatment comparisons
+  merged_df <- merge(treat1_comp, treat2_comp, by = "gene", suffixes = c(paste0("_", pair$label1), paste0("_", pair$label2)))
+
+  # Flag genes that are significant in either contrast
+  merged_df <- merged_df %>%
+    mutate(
+      sig = (get(paste0("adj.P.Val_", pair$label1)) <= 0.05) | (get(paste0("adj.P.Val_", pair$label2)) <= 0.05),
+      sig_both = (get(paste0("adj.P.Val_", pair$label1)) <= 0.05) & (get(paste0("adj.P.Val_", pair$label2)) <= 0.05)
+    ) %>%
+    # Calculate distance from y=x diagonal for discordance ranking
+    mutate(
+      distance_from_diagonal = abs(get(paste0("logFC_", pair$label2)) - get(paste0("logFC_", pair$label1)))
+    )
+
+  # Get top 30 most discordant genes among those significant in either comparison
+  top30_discordant <- merged_df %>%
+    filter(sig) %>%
+    arrange(desc(distance_from_diagonal)) %>%
+    slice(1:30)
+
+  # Create scatterplot
+  p_scatter <- ggplot(merged_df, aes(x = get(paste0("logFC_", pair$label1)), y = get(paste0("logFC_", pair$label2)))) +
+    # Non-significant points
+    geom_point(data = filter(merged_df, !sig),
+      aes(fill = get(paste0("adj.P.Val_", pair$label2)), color = get(paste0("adj.P.Val_", pair$label1))),
+      shape = 21, size = 3, stroke = 1, alpha = 0.5) +
+    # Significant points
+    geom_point(data = filter(merged_df, sig),
+      aes(fill = get(paste0("adj.P.Val_", pair$label2)), color = get(paste0("adj.P.Val_", pair$label1))),
+      shape = 21, size = 3, stroke = 1) +
+    # Label only top 30 most discordant genes significant in either comparison
+    geom_text_repel(data = top30_discordant,
+      aes(label = gene),
+      size = 3, max.overlaps = Inf) +
+    scale_fill_gradient(low = "blue", high = "grey", limits = c(0, 0.05), oob = scales::squish,
+      name = paste0("adj.P.Val (", pair$label2, ")")) +
+    scale_color_gradient(low = "red", high = "grey", limits = c(0, 0.05), oob = scales::squish,
+      name = paste0("adj.P.Val (", pair$label1, ")")) +
+    coord_equal() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
+    geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
+    labs(x = paste0("logFC: ", pair$stim, "_", pair$label1, " - NoTx"),
+      y = paste0("logFC: ", pair$stim, "_", pair$label2, " - NoTx"),
+      title = paste0("Scatterplot: ", pair$stim, " response with ", pair$label1, " vs ", pair$label2)) +
+    theme_bw() + theme(text = element_text(size = 12))
+
+  # Save scatterplot
+  pdf_filename <- file.path(plotDir, paste0("logFC_scatterplot_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  pdf(file = pdf_filename, width = 12, height = 8)
+  print(p_scatter)
+  dev.off()
+
+  # === VENN DIAGRAM ===
+  # Get significant genes for each comparison
+  sig_treat1 <- treat1_comp %>% filter(adj.P.Val <= 0.05) %>% pull(gene)
+  sig_treat2 <- treat2_comp %>% filter(adj.P.Val <= 0.05) %>% pull(gene)
+
+  # Create Venn diagram
+  venn_list <- list()
+  venn_list[[paste0(pair$stim, "_", pair$label1)]] <- sig_treat1
+  venn_list[[paste0(pair$stim, "_", pair$label2)]] <- sig_treat2
+
+  # Plot Venn diagram
+  p_venn <- ggvenn(venn_list,
+    fill_color = c("lightblue", "lightcoral"),
+    stroke_size = 0.5, set_name_size = 4)
+
+  # Save Venn diagram
+  pdf_filename_venn <- file.path(plotDir, paste0("venn_diagram_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  pdf(file = pdf_filename_venn, width = 8, height = 6)
+  print(p_venn)
+  dev.off()
+
+  # === SAVE VENN CATEGORIES TO XLSX ===
+  # Get intersection and unique genes
+  intersection <- intersect(sig_treat1, sig_treat2)
+  unique_treat1 <- setdiff(sig_treat1, sig_treat2)
+  unique_treat2 <- setdiff(sig_treat2, sig_treat1)
+
+  # Create workbook
+  wb <- createWorkbook()
+
+  # Add worksheets with gene lists
+  addWorksheet(wb, "Intersection")
+  addWorksheet(wb, paste0("Unique_", pair$label1))
+  addWorksheet(wb, paste0("Unique_", pair$label2))
+  addWorksheet(wb, "All_sig_genes")
+
+  # Write data
+  if (length(intersection) > 0) {
+    intersection_df <- treat1_comp %>% filter(gene %in% intersection) %>%
+      select(gene, logFC, adj.P.Val) %>%
+      rename_with(~ paste0(.x, "_", pair$label1), c(logFC, adj.P.Val)) %>%
+      left_join(treat2_comp %>% filter(gene %in% intersection) %>%
+        select(gene, logFC, adj.P.Val) %>%
+        rename_with(~ paste0(.x, "_", pair$label2), c(logFC, adj.P.Val)), by = "gene")
+    writeData(wb, "Intersection", intersection_df)
+  }
+
+  if (length(unique_treat1) > 0) {
+    unique_treat1_df <- treat1_comp %>% filter(gene %in% unique_treat1) %>%
+      select(gene, logFC, adj.P.Val)
+    writeData(wb, paste0("Unique_", pair$label1), unique_treat1_df)
+  }
+
+  if (length(unique_treat2) > 0) {
+    unique_treat2_df <- treat2_comp %>% filter(gene %in% unique_treat2) %>%
+      select(gene, logFC, adj.P.Val)
+    writeData(wb, paste0("Unique_", pair$label2), unique_treat2_df)
+  }
+
+  # All significant genes summary
+  all_sig_summary <- data.frame(
+    Category = c(paste0("Total_sig_genes_", pair$label1), paste0("Total_sig_genes_", pair$label2),
+      "Intersection", paste0("Unique_", pair$label1), paste0("Unique_", pair$label2)),
+    Count = c(length(sig_treat1), length(sig_treat2), length(intersection),
+      length(unique_treat1), length(unique_treat2))
+  )
+  writeData(wb, "All_sig_genes", all_sig_summary)
+
+  # Save workbook
+  xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".xlsx"))
+  saveWorkbook(wb, xlsx_filename, overwrite = TRUE)
+
+  cat("Completed analysis for:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
+}
+```
+
+```{r heatmaps3G9vsantiTGFbEffect}
+# Generate heatmaps for shared DEGs between 3G9 and antiTGFb effects
+# Load the 4 Excel files containing shared DEGs and create heatmaps
+
+library(ComplexHeatmap)
+library(circlize)
+library(openxlsx)
+
+# Define the 4 comparison pairs that have shared DEGs
+shared_pairs <- list(
+  list(stim = "IL4", label1 = "3G9", label2 = "antiTGFb"),
+  list(stim = "IL4_IL17", label1 = "3G9", label2 = "antiTGFb"),
+  list(stim = "TNFa", label1 = "3G9", label2 = "antiTGFb"),
+  list(stim = "TNFa_IL17", label1 = "3G9", label2 = "antiTGFb")
+)
+
+# Create heatmaps for each shared DEG set
+for (pair in shared_pairs) {
+  cat("Creating heatmap for shared DEGs:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
+
+  # Read the Excel file with shared DEGs
+  xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".xlsx"))
+
+  if (!file.exists(xlsx_filename)) {
+    cat("Warning: Excel file not found:", xlsx_filename, "\n")
+    next
+  }
+
+  # Read the intersection genes sheet
+  shared_genes <- read.xlsx(xlsx_filename, sheet = "Intersection")
+
+  if (nrow(shared_genes) == 0) {
+    cat("No shared genes found for:", pair$stim, "\n")
+    next
+  }
+
+  cat("Found", nrow(shared_genes), "shared genes for", pair$stim, "\n")
+
+  # Get expression data for these genes
+  gene_names <- shared_genes$gene
+  expr_data <- vwts.treatment$E[gene_names, , drop = FALSE]
+
+  # Z-score scale the expression data by gene (row-wise)
+  expr_data_scaled <- t(scale(t(expr_data)))
+
+  # Create column annotation based on treatment and stimulation
+  col_ann <- HeatmapAnnotation(
+    Treatment = annotatedMetricsQC$treatment,
+    Stimulation = annotatedMetricsQC$stimulation,
+    col = list(
+      Treatment = palTreatment,
+      Stimulation = palStimulation
+    ),
+    annotation_name_gp = gpar(fontsize = 10),
+    annotation_legend_param = list(
+      Treatment = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10)),
+      Stimulation = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10))
+    )
+  )
+
+  # Order columns by stimulation, then by treatment within stimulation
+  col_order <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
+  expr_data_ordered <- expr_data_scaled[, col_order, drop = FALSE]
+
+  # Create the heatmap
+  ht <- Heatmap(
+    expr_data_ordered,
+    name = "Z-score",
+    col = colorRamp2(c(min(expr_data_ordered), 0, max(expr_data_ordered)),
+      c("blue", "white", "red")),
+
+    # Row settings - cluster genes but don't show gene names
+    show_row_names = FALSE,
+    cluster_rows = TRUE,
+    row_dend_width = unit(10, "mm"),
+
+    # Column settings - group by stimulation, cluster within groups
+    column_split = annotatedMetricsQC$stimulation[col_order],
+    cluster_columns = TRUE,
+    cluster_column_slices = FALSE,
+    column_gap = unit(2, "mm"),
+    show_column_names = TRUE,
+    column_names_gp = gpar(fontsize = 8),
+    column_names_rot = 45,
+
+    # Add column annotation
+    top_annotation = col_ann,
+
+    # Heatmap body settings
+    heatmap_legend_param = list(
+      title = "Z-score",
+      title_gp = gpar(fontsize = 12),
+      labels_gp = gpar(fontsize = 10),
+      legend_height = unit(4, "cm")
+    ),
+
+    # Overall settings
+    row_title = paste0("Shared DEGs (n=", nrow(shared_genes), ")"),
+    row_title_gp = gpar(fontsize = 12),
+    column_title = paste0(pair$stim, ": Shared DEGs between ", pair$label1, " and ", pair$label2, " effects"),
+    column_title_gp = gpar(fontsize = 14, fontface = "bold")
+  )
+
+  # Save the heatmap as PDF
+  pdf_filename <- file.path(plotDir, paste0("heatmap_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+
+  pdf(pdf_filename, width = 12, height = 8)
+  draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
+  dev.off()
+
+  cat("Saved heatmap:", pdf_filename, "\n\n")
+}
+
+cat("Completed all shared DEG heatmaps\n")
+
+# Create second version of heatmaps: Top 50 genes by adj.P.Val with gene names labeled
+cat("Creating top 50 gene heatmaps with gene labels...\n")
+
+for (pair in shared_pairs) {
+  cat("Creating top 50 gene heatmap for:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
+
+  # Read the Excel file with shared DEGs
+  xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".xlsx"))
+
+  if (!file.exists(xlsx_filename)) {
+    cat("Warning: Excel file not found:", xlsx_filename, "\n")
+    next
+  }
+
+  # Read the intersection genes sheet
+  shared_genes <- read.xlsx(xlsx_filename, sheet = "Intersection")
+
+  if (nrow(shared_genes) == 0) {
+    cat("No shared genes found for:", pair$stim, "\n")
+    next
+  }
+
+  # Sort by the minimum adjusted p-value from either comparison and take top 50
+  shared_genes$min_adj_pval <- pmin(
+    shared_genes[[paste0("adj.P.Val_", pair$label1)]],
+    shared_genes[[paste0("adj.P.Val_", pair$label2)]]
+  )
+  shared_genes_top50 <- shared_genes %>%
+    arrange(min_adj_pval) %>%
+    slice(1:min(50, nrow(shared_genes)))
+
+  cat("Selected top", nrow(shared_genes_top50), "genes for", pair$stim, "\n")
+
+  # Get expression data for these top genes
+  gene_names_top50 <- shared_genes_top50$gene
+  expr_data_top50 <- vwts.treatment$E[gene_names_top50, , drop = FALSE]
+
+  # Z-score scale the expression data by gene (row-wise)
+  expr_data_top50_scaled <- t(scale(t(expr_data_top50)))
+
+  # Create column annotation based on treatment and stimulation
+  col_ann_top50 <- HeatmapAnnotation(
+    Treatment = annotatedMetricsQC$treatment,
+    Stimulation = annotatedMetricsQC$stimulation,
+    col = list(
+      Treatment = palTreatment,
+      Stimulation = palStimulation
+    ),
+    annotation_name_gp = gpar(fontsize = 10),
+    annotation_legend_param = list(
+      Treatment = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10)),
+      Stimulation = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10))
+    )
+  )
+
+  # Order columns by stimulation, then by treatment within stimulation
+  col_order <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
+  expr_data_top50_ordered <- expr_data_top50_scaled[, col_order, drop = FALSE]
+
+  # Create the heatmap with gene names labeled
+  ht_top50 <- Heatmap(
+    expr_data_top50_ordered,
+    name = "Z-score",
+    col = colorRamp2(c(min(expr_data_top50_ordered), 0, max(expr_data_top50_ordered)),
+      c("blue", "white", "red")),
+
+    # Row settings - cluster genes and show gene names
+    show_row_names = TRUE,
+    row_names_gp = gpar(fontsize = 8),
+    cluster_rows = TRUE,
+    row_dend_width = unit(10, "mm"),
+
+    # Column settings - group by stimulation, cluster within groups
+    column_split = annotatedMetricsQC$stimulation[col_order],
+    cluster_columns = TRUE,
+    cluster_column_slices = FALSE,
+    column_gap = unit(2, "mm"),
+    show_column_names = TRUE,
+    column_names_gp = gpar(fontsize = 8),
+    column_names_rot = 45,
+
+    # Add column annotation
+    top_annotation = col_ann_top50,
+
+    # Heatmap body settings
+    heatmap_legend_param = list(
+      title = "Z-score",
+      title_gp = gpar(fontsize = 12),
+      labels_gp = gpar(fontsize = 10),
+      legend_height = unit(4, "cm")
+    ),
+
+    # Overall settings
+    row_title = paste0("Top ", nrow(shared_genes_top50), " Shared DEGs (by adj.P.Val)"),
+    row_title_gp = gpar(fontsize = 12),
+    column_title = paste0(pair$stim, ": Top Shared DEGs between ", pair$label1, " and ", pair$label2, " effects"),
+    column_title_gp = gpar(fontsize = 14, fontface = "bold")
+  )
+
+  # Save the top 50 heatmap as PDF
+  pdf_filename_top50 <- file.path(plotDir, paste0("heatmap_top50_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+
+  pdf(pdf_filename_top50, width = 14, height = 10)
+  draw(ht_top50, heatmap_legend_side = "right", annotation_legend_side = "right")
+  dev.off()
+
+  cat("Saved top 50 heatmap:", pdf_filename_top50, "\n\n")
+}
+
+cat("Completed all top 50 shared DEG heatmaps with gene labels\n")
+```
+
+```{r stimulationSpecificSignaturesAlteredBy3G9_OR_antiTGFb}
+# Define the 8 specific comparison pairs as requested
+# These compare how modifiers (3G9 or antiTGFb) affect each stimulation condition
+modifier_effect_pairs <- list(
+  # (IL4 - NoTx) vs (IL4_3G9 - NoTx)
+  list(comp1 = "IL4_vs_NoTx", comp2 = "IL4_3G9_vs_NoTx",
+    label1 = "IL4", label2 = "IL4_3G9"),
+  # (IL4 - NoTx) vs (IL4_antiTGFb - NoTx)
+  list(comp1 = "IL4_vs_NoTx", comp2 = "IL4_antiTGFb_vs_NoTx",
+    label1 = "IL4", label2 = "IL4_antiTGFb"),
+  # (IL4_IL17 - NoTx) vs (IL4_IL17_3G9 - NoTx)
+  list(comp1 = "IL4_IL17_vs_NoTx", comp2 = "IL4_IL17_3G9_vs_NoTx",
+    label1 = "IL4_IL17", label2 = "IL4_IL17_3G9"),
+  # (IL4_IL17 - NoTx) vs (IL4_IL17_antiTGFb - NoTx)
+  list(comp1 = "IL4_IL17_vs_NoTx", comp2 = "IL4_IL17_antiTGFb_vs_NoTx",
+    label1 = "IL4_IL17", label2 = "IL4_IL17_antiTGFb"),
+  # (TNFa - NoTx) vs (TNFa_3G9 - NoTx)
+  list(comp1 = "TNFa_vs_NoTx", comp2 = "TNFa_3G9_vs_NoTx",
+    label1 = "TNFa", label2 = "TNFa_3G9"),
+  # (TNFa - NoTx) vs (TNFa_antiTGFb - NoTx)
+  list(comp1 = "TNFa_vs_NoTx", comp2 = "TNFa_antiTGFb_vs_NoTx",
+    label1 = "TNFa", label2 = "TNFa_antiTGFb"),
+  # (TNFa_IL17 - NoTx) vs (TNFa_IL17_3G9 - NoTx)
+  list(comp1 = "TNFa_IL17_vs_NoTx", comp2 = "TNFa_IL17_3G9_vs_NoTx",
+    label1 = "TNFa_IL17", label2 = "TNFa_IL17_3G9"),
+  # (TNFa_IL17 - NoTx) vs (TNFa_IL17_antiTGFb - NoTx)
+  list(comp1 = "TNFa_IL17_vs_NoTx", comp2 = "TNFa_IL17_antiTGFb_vs_NoTx",
+    label1 = "TNFa_IL17", label2 = "TNFa_IL17_antiTGFb")
+)
+
+# Create scatterplots and Venn diagrams for each modifier effect comparison
+for (pair in modifier_effect_pairs) {
+  # Extract comparison data
+  comp1_data <- comparisons[[pair$comp1]]
+  comp2_data <- comparisons[[pair$comp2]]
+
+  # === SCATTERPLOT ===
+  # Merge the two comparisons
+  merged_df <- merge(comp1_data, comp2_data, by = "gene", suffixes = c("_comp1", "_comp2"))
+
+  # Flag genes that are significant in either contrast
+  merged_df <- merged_df %>%
+    mutate(
+      sig = (adj.P.Val_comp1 <= 0.05) | (adj.P.Val_comp2 <= 0.05),
+      sig_both = (adj.P.Val_comp1 <= 0.05) & (adj.P.Val_comp2 <= 0.05)
+    ) %>%
+    # Calculate distance from y=x diagonal for discordance ranking
+    mutate(
+      distance_from_diagonal = abs(logFC_comp2 - logFC_comp1)
+    )
+
+  # Get top 30 most discordant genes among those significant in either comparison
+  top30_discordant <- merged_df %>%
+    filter(sig) %>%
+    arrange(desc(distance_from_diagonal)) %>%
+    slice(1:30)
+
+  # Create scatterplot
+  p_scatter <- ggplot(merged_df, aes(x = logFC_comp1, y = logFC_comp2)) +
+    # Non-significant points
+    geom_point(data = filter(merged_df, !sig),
+      aes(fill = adj.P.Val_comp2, color = adj.P.Val_comp1),
+      shape = 21, size = 3, stroke = 1, alpha = 0.5) +
+    # Significant points
+    geom_point(data = filter(merged_df, sig),
+      aes(fill = adj.P.Val_comp2, color = adj.P.Val_comp1),
+      shape = 21, size = 3, stroke = 1) +
+    # Label only top 30 most discordant genes significant in either comparison
+    geom_text_repel(data = top30_discordant,
+      aes(label = gene),
+      size = 3, max.overlaps = Inf) +
+    scale_fill_gradient(low = "blue", high = "grey", limits = c(0, 0.05), oob = scales::squish,
+      name = paste0("adj.P.Val (", pair$label2, ")")) +
+    scale_color_gradient(low = "red", high = "grey", limits = c(0, 0.05), oob = scales::squish,
+      name = paste0("adj.P.Val (", pair$label1, ")")) +
+    coord_equal() +
+    geom_abline(intercept = 0, slope = 1, linetype = "dotted") +
+    geom_vline(xintercept = 0) + geom_hline(yintercept = 0) +
+    labs(x = paste0("logFC: ", pair$label1, " - NoTx"),
+      y = paste0("logFC: ", pair$label2, " - NoTx"),
+      title = paste0(pair$label1, " vs ", pair$label2, " response")) +
+    theme_bw() + theme(text = element_text(size = 12))
+
+  # Save scatterplot
+  pdf_filename <- file.path(plotDir, paste0("logFC_scatterplot_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  pdf(file = pdf_filename, width = 12, height = 8)
+  print(p_scatter)
+  dev.off()
+
+  # === VENN DIAGRAM ===
+  # Get significant genes for each comparison
+  sig_comp1 <- comp1_data %>% filter(adj.P.Val <= 0.05) %>% pull(gene)
+  sig_comp2 <- comp2_data %>% filter(adj.P.Val <= 0.05) %>% pull(gene)
+
+  # Create Venn diagram
+  venn_list <- list()
+  venn_list[[pair$label1]] <- sig_comp1
+  venn_list[[pair$label2]] <- sig_comp2
+
+  # Plot Venn diagram
+  p_venn <- ggvenn(venn_list,
+    fill_color = c("lightblue", "lightpink"),
+    stroke_size = 0.5, set_name_size = 4)
+
+  # Save Venn diagram
+  pdf_filename_venn <- file.path(plotDir, paste0("venn_diagram_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  pdf(file = pdf_filename_venn, width = 8, height = 6)
+  print(p_venn)
+  dev.off()
+
+  # === SAVE VENN CATEGORIES TO XLSX ===
+  # Get intersection and unique genes
+  intersection <- intersect(sig_comp1, sig_comp2)
+  unique_comp1 <- setdiff(sig_comp1, sig_comp2)
+  unique_comp2 <- setdiff(sig_comp2, sig_comp1)
+
+  # Create workbook
+  wb <- createWorkbook()
+
+  # Add worksheets with gene lists
+  addWorksheet(wb, "Intersection")
+  addWorksheet(wb, paste0("Unique_", pair$label1))
+  addWorksheet(wb, paste0("Unique_", pair$label2))
+  addWorksheet(wb, "All_sig_genes")
+
+  # Write data
+  if (length(intersection) > 0) {
+    intersection_df <- comp1_data %>% filter(gene %in% intersection) %>%
+      select(gene, logFC, adj.P.Val) %>%
+      rename_with(~ paste0(.x, "_", pair$label1), c(logFC, adj.P.Val)) %>%
+      left_join(comp2_data %>% filter(gene %in% intersection) %>%
+        select(gene, logFC, adj.P.Val) %>%
+        rename_with(~ paste0(.x, "_", pair$label2), c(logFC, adj.P.Val)), by = "gene")
+    writeData(wb, "Intersection", intersection_df)
+  }
+
+  if (length(unique_comp1) > 0) {
+    unique_comp1_df <- comp1_data %>% filter(gene %in% unique_comp1) %>%
+      select(gene, logFC, adj.P.Val)
+    writeData(wb, paste0("Unique_", pair$label1), unique_comp1_df)
+  }
+
+  if (length(unique_comp2) > 0) {
+    unique_comp2_df <- comp2_data %>% filter(gene %in% unique_comp2) %>%
+      select(gene, logFC, adj.P.Val)
+    writeData(wb, paste0("Unique_", pair$label2), unique_comp2_df)
+  }
+
+  # All significant genes summary
+  all_sig_summary <- data.frame(
+    Category = c(paste0("Total_sig_genes_", pair$label1),
+      paste0("Total_sig_genes_", pair$label2),
+      "Intersection",
+      paste0("Unique_", pair$label1),
+      paste0("Unique_", pair$label2)),
+    Count = c(length(sig_comp1), length(sig_comp2), length(intersection),
+      length(unique_comp1), length(unique_comp2))
+  )
+  writeData(wb, "All_sig_genes", all_sig_summary)
+
+  # Save workbook
+  xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$label1, "_vs_", pair$label2, ".xlsx"))
+  saveWorkbook(wb, xlsx_filename, overwrite = TRUE)
+
+  cat("Completed analysis for:", pair$label1, "vs", pair$label2, "\n")
+}
+```
