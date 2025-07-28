@@ -103,9 +103,46 @@ outputDataDir <- file.path(baseDir, "data/outputData")
 inputDataDir <- file.path(baseDir, "data/inputData")
 plotDir <- file.path(baseDir, "figures")
 
-dataDate <- "2025-06-24" # yyyy-mm-dd
+dataDate <- "2025-06-30" # yyyy-mm-dd
 
 filenameSuffix <- paste0("P597_6_", dataDate)
+```
+
+```{r setupFunctions}
+# function for saving plots as both pdf and png
+savePlot <- function(
+    plot,
+    plotDir,
+    filename,
+    height,
+    width,
+    units = "in",
+    dpi = 600,
+    formats = c("pdf", "png")
+    ) {
+  # Ensure plotDir exists
+  if (!dir.exists(plotDir)) dir.create(plotDir, recursive = TRUE)
+
+  # Save as PDF
+  if ("pdf" %in% formats) {
+    pdf(file.path(plotDir, paste0(filename, ".pdf")), height = height, width = width)
+    print(plot)
+    dev.off()
+  }
+
+  # Save as PNG
+  if ("png" %in% formats) {
+    png(
+      file.path(plotDir, paste0(filename, ".png")),
+      height = height,
+      width = width,
+      units = units,
+      res = dpi
+    )
+    print(plot)
+    dev.off()
+  }
+}
 ```
 
 ```{r import_data}
@@ -177,6 +214,22 @@ colnames(counts) <- sub("_.*", "", colnames(counts))
 ```
 
 ```{r setupPalettes}
+
+colors_sel <- c(
+  "#053061",  # Dark blue
+  "#2166AC",  # Medium blue
+  "#4393C3",  # Light blue
+  "#92C5DE",  # Very light blue
+  "#D1E5F0",  # Pale blue
+  "#FFFFFF",  # White (center/neutral)
+  "#FDDBC7",  # Pale red
+  "#F4A582",  # Very light red
+  "#D6604D",  # Light red
+  "#B2182B",  # Medium red
+  "#67001F"   # Dark red
+)
+
+
 # treatment
 
 # colors from palettesForR::Tango
@@ -499,21 +552,33 @@ fit.treatment <- lmFit(vwts.treatment,
 fit.treatment <- eBayes(fit.treatment)
 
 contrasts.matrix <- makeContrasts(
-  `IL4_vs_NoTx`                  = `IL4` - `NoTx`,
-  `IL4_3G9_vs_NoTx`              = `IL4_3G9` - `NoTx`,
-  `IL4_antiTGFb_vs_NoTx`         = `IL4_antiTGFb` - `NoTx`,
+  `IL4_vs_NoTx`                     = `IL4` - `NoTx`,
+  `IL4_3G9_vs_NoTx`                 = `IL4_3G9` - `NoTx`,
+  `IL4_antiTGFb_vs_NoTx`            = `IL4_antiTGFb` - `NoTx`,
 
-  `IL4_IL17_vs_NoTx`             = `IL4_IL17` - `NoTx`,
-  `IL4_IL17_3G9_vs_NoTx`         = `IL4_IL17_3G9` - `NoTx`,
-  `IL4_IL17_antiTGFb_vs_NoTx`    = `IL4_IL17_antiTGFb` - `NoTx`,
+  `IL4_IL17_vs_NoTx`                = `IL4_IL17` - `NoTx`,
+  `IL4_IL17_3G9_vs_NoTx`            = `IL4_IL17_3G9` - `NoTx`,
+  `IL4_IL17_antiTGFb_vs_NoTx`       = `IL4_IL17_antiTGFb` - `NoTx`,
 
-  `TNFa_vs_NoTx`                 = `TNFa` - `NoTx`,
-  `TNFa_3G9_vs_NoTx`             = `TNFa_3G9` - `NoTx`,
-  `TNFa_antiTGFb_vs_NoTx`        = `TNFa_antiTGFb` - `NoTx`,
+  `TNFa_vs_NoTx`                    = `TNFa` - `NoTx`,
+  `TNFa_3G9_vs_NoTx`                = `TNFa_3G9` - `NoTx`,
+  `TNFa_antiTGFb_vs_NoTx`           = `TNFa_antiTGFb` - `NoTx`,
 
-  `TNFa_IL17_vs_NoTx`            = `TNFa_IL17` - `NoTx`,
-  `TNFa_IL17_3G9_vs_NoTx`        = `TNFa_IL17_3G9` - `NoTx`,
-  `TNFa_IL17_antiTGFb_vs_NoTx`   = `TNFa_IL17_antiTGFb` - `NoTx`,
+  `TNFa_IL17_vs_NoTx`               = `TNFa_IL17` - `NoTx`,
+  `TNFa_IL17_3G9_vs_NoTx`           = `TNFa_IL17_3G9` - `NoTx`,
+  `TNFa_IL17_antiTGFb_vs_NoTx`      = `TNFa_IL17_antiTGFb` - `NoTx`,
+
+  `IL4_3G9_vs_IL4`                  = `IL4_3G9` - `IL4`,
+  `IL4_antiTGFb_vs_IL4`             = `IL4_antiTGFb` - `IL4`,
+
+  `IL4_IL17_3G9_vs_IL4_IL17`        = `IL4_IL17_3G9` - `IL4_IL17`,
+  `IL4_IL17_antiTGFb_vs_IL4_IL17`   = `IL4_IL17_antiTGFb` - `IL4_IL17`,
+
+  `TNFa_3G9_vs_TNFa`                = `TNFa_3G9` - `TNFa`,
+  `TNFa_antiTGFb_vs_TNFa`           = `TNFa_antiTGFb` - `TNFa`,
+
+  `TNFa_IL17_3G9_vs_TNFa_IL17`      = `TNFa_IL17_3G9` - `TNFa_IL17`,
+  `TNFa_IL17_antiTGFb_vs_TNFa_IL17` = `TNFa_IL17_antiTGFb` - `TNFa_IL17`,
 
   levels = designMat.treatment)
 
@@ -602,6 +667,564 @@ for (comp in names(comparisons)) {
   print(p)
   dev.off()
 }
+```
+
+```{r twoGroupDEGHeatmaps}
+# z-scored log expression heatmaps of sig. DEGs from the two-group comparisons
+
+library(ComplexHeatmap)
+library(circlize)
+
+# Get list of all two-group comparisons (exclude the modifier effect comparisons)
+two_group_comparisons <- names(comparisons)
+
+# Function to get treatment groups from comparison name
+get_treatment_groups <- function(comp_name) {
+  # Parse comparison name to get the two treatment groups
+  # Format: "treatment1_vs_treatment2"
+  parts <- strsplit(comp_name, "_vs_")[[1]]
+  treatment1 <- parts[1]
+  treatment2 <- parts[2]
+  return(list(treatment1 = treatment1, treatment2 = treatment2))
+}
+
+# Create heatmaps for each comparison
+for (comp_name in two_group_comparisons) {
+  cat("Creating heatmaps for:", comp_name, "\n")
+
+  # Get the comparison data
+  comp_data <- comparisons[[comp_name]]
+
+  # Filter for significant genes
+  sig_genes <- comp_data %>% filter(adj.P.Val <= 0.05)
+
+  if (nrow(sig_genes) == 0) {
+    cat("No significant genes found for", comp_name, "- skipping heatmaps\n")
+    next
+  }
+
+  cat("Found", nrow(sig_genes), "significant genes for", comp_name, "\n")
+
+  # Get treatment groups for this comparison
+  treatment_groups <- get_treatment_groups(comp_name)
+
+  # Get libraries for version b (only those involved in this comparison)
+  libs_subset <- annotatedMetricsQC$libid[annotatedMetricsQC$treatment %in% c(treatment_groups$treatment1, treatment_groups$treatment2)]
+  anno_subset <- annotatedMetricsQC[annotatedMetricsQC$libid %in% libs_subset, ]
+
+  # === VERSION 1: Top 60 DEGs by adj.p.val ===
+  top60_genes <- comp_data %>%
+    arrange(adj.P.Val) %>%
+    slice(1:min(60, nrow(comp_data))) %>%
+    filter(adj.P.Val <= 0.05)  # Only include significant genes
+
+  if (nrow(top60_genes) > 0) {
+    # VERSION 1A: All libraries
+    # Get expression data for these genes
+    expr_data_v1a <- vwts.treatment$E[top60_genes$gene, , drop = FALSE]
+
+    # Z-score scale by gene (row-wise)
+    expr_data_v1a_scaled <- t(scale(t(expr_data_v1a)))
+
+    # Create column annotation
+    col_ann_v1a <- HeatmapAnnotation(
+      Treatment = annotatedMetricsQC$treatment,
+      Stimulation = annotatedMetricsQC$stimulation,
+      col = list(
+        Treatment = palTreatment,
+        Stimulation = palStimulation
+      ),
+      annotation_name_gp = gpar(fontsize = 10)
+    )
+
+    # Order columns by stimulation, then by treatment
+    col_order_v1a <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
+    expr_data_v1a_ordered <- expr_data_v1a_scaled[, col_order_v1a, drop = FALSE]
+
+    # Create heatmap v1a
+    # Set dynamic color range based on data
+    z_range_v1a <- range(expr_data_v1a_ordered, na.rm = TRUE)
+    z_max_v1a <- max(abs(z_range_v1a))
+
+    ht_v1a <- Heatmap(
+      expr_data_v1a_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v1a, 0, z_max_v1a), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = annotatedMetricsQC$stimulation[col_order_v1a],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1a,
+      column_title = paste0(comp_name, ": Top ", nrow(top60_genes), " DEGs by adj.P.Val (All Libraries)"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    # Save version 1a heatmap
+    pdf_filename_v1a <- file.path(plotDir, paste0("heatmap_v1a_top60_", comp_name, ".pdf"))
+    pdf(pdf_filename_v1a, width = 12, height = max(8, nrow(top60_genes) * 0.2))
+    draw(ht_v1a, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+
+    # VERSION 1B: Only comparison-relevant libraries
+    expr_data_v1b <- expr_data_v1a_scaled[, libs_subset, drop = FALSE]
+    expr_data_v1b_scaled <- t(scale(t(expr_data_v1b)))  # Re-scale for subset
+
+    col_ann_v1b <- HeatmapAnnotation(
+      Treatment = anno_subset$treatment,
+      Stimulation = anno_subset$stimulation,
+      col = list(
+        Treatment = palTreatment,
+        Stimulation = palStimulation
+      ),
+      annotation_name_gp = gpar(fontsize = 10)
+    )
+
+    col_order_v1b <- order(anno_subset$stimulation, anno_subset$treatment)
+    expr_data_v1b_ordered <- expr_data_v1b_scaled[, col_order_v1b, drop = FALSE]
+
+    # Set dynamic color range based on data
+    z_range_v1b <- range(expr_data_v1b_ordered, na.rm = TRUE)
+    z_max_v1b <- max(abs(z_range_v1b))
+
+    ht_v1b <- Heatmap(
+      expr_data_v1b_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v1b, 0, z_max_v1b), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = anno_subset$stimulation[col_order_v1b],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1b,
+      column_title = paste0(comp_name, ": Top ", nrow(top60_genes), " DEGs by adj.P.Val (Comparison Libraries Only)"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    pdf_filename_v1b <- file.path(plotDir, paste0("heatmap_v1b_top60_", comp_name, ".pdf"))
+    pdf(pdf_filename_v1b, width = 12, height = max(8, nrow(top60_genes) * 0.2))
+    draw(ht_v1b, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+  }
+
+  # === VERSION 2: Top 30 -logFC and top 30 +logFC DEGs by adj.p.val ===
+  # Get top 30 downregulated genes (most negative logFC, significant)
+  top30_down <- sig_genes %>%
+    filter(logFC < 0) %>%
+    arrange(adj.P.Val) %>%
+    slice(1:min(30, nrow(.)))
+
+  # Get top 30 upregulated genes (most positive logFC, significant)
+  top30_up <- sig_genes %>%
+    filter(logFC > 0) %>%
+    arrange(adj.P.Val) %>%
+    slice(1:min(30, nrow(.)))
+
+  # Combine up and down genes
+  top30_updown_v2 <- rbind(top30_down, top30_up)
+
+  if (nrow(top30_updown_v2) > 0) {
+    # VERSION 2A: All libraries
+    expr_data_v2a <- vwts.treatment$E[top30_updown_v2$gene, , drop = FALSE]
+    expr_data_v2a_scaled <- t(scale(t(expr_data_v2a)))
+    expr_data_v2a_ordered <- expr_data_v2a_scaled[, col_order_v1a, drop = FALSE]
+
+    # Set dynamic color range based on data
+    z_range_v2a <- range(expr_data_v2a_ordered, na.rm = TRUE)
+    z_max_v2a <- max(abs(z_range_v2a))
+
+    ht_v2a <- Heatmap(
+      expr_data_v2a_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v2a, 0, z_max_v2a), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = annotatedMetricsQC$stimulation[col_order_v1a],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1a,
+      column_title = paste0(comp_name, ": Top 30 Up+Down DEGs by adj.P.Val (",
+        nrow(top30_up), " up, ", nrow(top30_down), " down) - All Libraries"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    pdf_filename_v2a <- file.path(plotDir, paste0("heatmap_v2a_top30updown_adjpval_", comp_name, ".pdf"))
+    pdf(pdf_filename_v2a, width = 12, height = max(8, nrow(top30_updown_v2) * 0.25))
+    draw(ht_v2a, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+
+    # VERSION 2B: Only comparison-relevant libraries
+    expr_data_v2b <- expr_data_v2a_scaled[, libs_subset, drop = FALSE]
+    expr_data_v2b_scaled <- t(scale(t(expr_data_v2b)))
+    expr_data_v2b_ordered <- expr_data_v2b_scaled[, col_order_v1b, drop = FALSE]
+
+    # Set dynamic color range based on data
+    z_range_v2b <- range(expr_data_v2b_ordered, na.rm = TRUE)
+    z_max_v2b <- max(abs(z_range_v2b))
+
+    ht_v2b <- Heatmap(
+      expr_data_v2b_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v2b, 0, z_max_v2b), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = anno_subset$stimulation[col_order_v1b],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1b,
+      column_title = paste0(comp_name, ": Top 30 Up+Down DEGs by adj.P.Val (",
+        nrow(top30_up), " up, ", nrow(top30_down), " down) - Comparison Libraries Only"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    pdf_filename_v2b <- file.path(plotDir, paste0("heatmap_v2b_top30updown_adjpval_", comp_name, ".pdf"))
+    pdf(pdf_filename_v2b, width = 12, height = max(8, nrow(top30_updown_v2) * 0.25))
+    draw(ht_v2b, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+  }
+
+  # === VERSION 3: Top 30 -logFC and top 30 +logFC DEGs by abs(logFC), require adj.p.val < 0.05 ===
+  # Get top 30 downregulated genes by absolute logFC (most negative, significant)
+  top30_down_v3 <- sig_genes %>%
+    filter(logFC < 0) %>%
+    arrange(logFC) %>%  # Most negative first
+    slice(1:min(30, nrow(.)))
+
+  # Get top 30 upregulated genes by absolute logFC (most positive, significant)
+  top30_up_v3 <- sig_genes %>%
+    filter(logFC > 0) %>%
+    arrange(desc(logFC)) %>%  # Most positive first
+    slice(1:min(30, nrow(.)))
+
+  # Combine up and down genes
+  top30_updown_v3 <- rbind(top30_down_v3, top30_up_v3)
+
+  if (nrow(top30_updown_v3) > 0) {
+    # VERSION 3A: All libraries
+    expr_data_v3a <- vwts.treatment$E[top30_updown_v3$gene, , drop = FALSE]
+    expr_data_v3a_scaled <- t(scale(t(expr_data_v3a)))
+    expr_data_v3a_ordered <- expr_data_v3a_scaled[, col_order_v1a, drop = FALSE]
+
+    # Set dynamic color range based on data
+    z_range_v3a <- range(expr_data_v3a_ordered, na.rm = TRUE)
+    z_max_v3a <- max(abs(z_range_v3a))
+
+    ht_v3a <- Heatmap(
+      expr_data_v3a_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v3a, 0, z_max_v3a), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = annotatedMetricsQC$stimulation[col_order_v1a],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1a,
+      column_title = paste0(comp_name, ": Top 30 Up+Down DEGs by |logFC| (",
+        nrow(top30_up_v3), " up, ", nrow(top30_down_v3), " down) - All Libraries"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    pdf_filename_v3a <- file.path(plotDir, paste0("heatmap_v3a_top30updown_abslogfc_", comp_name, ".pdf"))
+    pdf(pdf_filename_v3a, width = 12, height = max(8, nrow(top30_updown_v3) * 0.25))
+    draw(ht_v3a, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+
+    # VERSION 3B: Only comparison-relevant libraries
+    expr_data_v3b <- expr_data_v3a_scaled[, libs_subset, drop = FALSE]
+    expr_data_v3b_scaled <- t(scale(t(expr_data_v3b)))
+    expr_data_v3b_ordered <- expr_data_v3b_scaled[, col_order_v1b, drop = FALSE]
+
+    # Set dynamic color range based on data
+    z_range_v3b <- range(expr_data_v3b_ordered, na.rm = TRUE)
+    z_max_v3b <- max(abs(z_range_v3b))
+
+    ht_v3b <- Heatmap(
+      expr_data_v3b_ordered,
+      name = "Z-score",
+      col = colorRamp2(c(-z_max_v3b, 0, z_max_v3b), c("blue", "white", "red")),
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 10),
+      cluster_rows = TRUE,
+      column_split = anno_subset$stimulation[col_order_v1b],
+      cluster_columns = TRUE,
+      cluster_column_slices = FALSE,
+      show_column_names = FALSE,
+      column_names_gp = gpar(fontsize = 10),
+      column_names_rot = 45,
+      top_annotation = col_ann_v1b,
+      column_title = paste0(comp_name, ": Top 30 Up+Down DEGs by |logFC| (",
+        nrow(top30_up_v3), " up, ", nrow(top30_down_v3), " down) - Comparison Libraries Only"),
+      column_title_gp = gpar(fontsize = 12, fontface = "bold")
+    )
+
+    pdf_filename_v3b <- file.path(plotDir, paste0("heatmap_v3b_top30updown_abslogfc_", comp_name, ".pdf"))
+    pdf(pdf_filename_v3b, width = 12, height = max(8, nrow(top30_updown_v3) * 0.25))
+    draw(ht_v3b, heatmap_legend_side = "right", annotation_legend_side = "right")
+    dev.off()
+  }
+
+  cat("Completed heatmaps for:", comp_name, "\n\n")
+}
+
+cat("Completed all two-group DEG heatmaps\n")
+```
+
+```{r twoGroupDEGGSEAPlots}
+# GSEA analysis for all two-group comparisons
+library(clusterProfiler)
+library(msigdbr)
+library(enrichplot)
+
+nTerms <- 15 # number of terms to include in the plots
+
+# Function to create combined GSEA plots for any comparison
+create_combined_gsea <- function(comparison_name, comparison_data) {
+  cat("Running GSEA for:", comparison_name, "\n")
+
+  # Get gene sets
+  hs_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+    dplyr::select(gs_name, gene_symbol)
+
+  GO_sets <- msigdbr(species = "Homo sapiens", category = "C5") %>%
+    dplyr::select(gs_name, gene_symbol)
+
+  # Prepare gene list - filter for genes with adj.P.Val <= 0.1 for GSEA input
+  df_filtered <- comparison_data %>% dplyr::filter(adj.P.Val <= 0.05)
+
+  if (nrow(df_filtered) == 0) {
+    cat("No genes with adj.P.Val <= 0.1 found for", comparison_name, ". Skipping.\n")
+    return(NULL)
+  }
+
+  geneList <- df_filtered$logFC
+  names(geneList) <- df_filtered$gene
+  geneList <- sort(geneList, decreasing = TRUE)
+
+  cat("Gene list length for", comparison_name, ":", length(geneList), "\n")
+
+  # Run GSEA for both gene sets
+  tryCatch(
+    {
+      hallmark_gsea <- GSEA(geneList,
+        TERM2GENE = hs_sets,
+        minGSSize = 10,
+        maxGSSize = 1000,
+        pvalueCutoff = 0.05)
+
+      go_gsea <- GSEA(geneList,
+        TERM2GENE = GO_sets,
+        minGSSize = 10,
+        maxGSSize = 1000,
+        pvalueCutoff = 0.05)
+
+      # Select significant terms
+      hallmark_significant <- hallmark_gsea@result %>%
+        dplyr::filter(p.adjust < 0.05) %>%
+        dplyr::arrange(p.adjust) %>%
+        dplyr::slice(1:min(nTerms, nrow(.)))
+
+      go_significant <- go_gsea@result %>%
+        dplyr::filter(p.adjust < 0.05) %>%
+        dplyr::arrange(p.adjust) %>%
+        dplyr::slice(1:min(nTerms, nrow(.)))
+
+      # Print debugging info
+      cat("Hallmark significant terms (p.adjust < 0.05):", nrow(hallmark_significant), "\n")
+      cat("GO significant terms (p.adjust < 0.05):", nrow(go_significant), "\n")
+
+      # Check if we have any significant terms at all
+      if (nrow(hallmark_significant) == 0 && nrow(go_significant) == 0) {
+        cat("No significant terms found for", comparison_name, ". Creating empty plot.\n")
+        empty_plot <- ggplot() +
+          geom_text(aes(x = 0, y = 0, label = "No significant terms found"), size = 6) +
+          theme_void() +
+          ggtitle(paste0(comparison_name, ": No Significant Terms"))
+        return(list(plot = empty_plot, data = data.frame(), comparison = comparison_name))
+      }
+
+      # Prepare data for plotting
+      plot_data_list <- list()
+
+      if (nrow(hallmark_significant) > 0) {
+        hallmark_data <- hallmark_significant %>%
+          dplyr::mutate(
+            GeneSet = "Hallmark",
+            Description_clean = paste0("H: ", gsub("HALLMARK_", "", Description))
+          )
+        plot_data_list[["Hallmark"]] <- hallmark_data
+      }
+
+      if (nrow(go_significant) > 0) {
+        go_data <- go_significant %>%
+          dplyr::mutate(
+            GeneSet = "GO",
+            Description_clean = paste0("GO: ", gsub("GOCC_|GOBP_|GOMF_", "", Description))
+          )
+        plot_data_list[["GO"]] <- go_data
+      }
+
+      # Only proceed if we have data to plot
+      if (length(plot_data_list) == 0) {
+        cat("No plot data for", comparison_name, "\n")
+        return(NULL)
+      }
+
+      # Combine data - include setSize for dot size
+      combined_data <- do.call(rbind, lapply(names(plot_data_list), function(gs) {
+        plot_data_list[[gs]] %>% dplyr::select(ID, Description_clean, NES, p.adjust, setSize, GeneSet)
+      }))
+
+      # Order terms by NES magnitude within each gene set
+      if ("Hallmark" %in% names(plot_data_list)) {
+        hallmark_order <- plot_data_list[["Hallmark"]] %>%
+          dplyr::arrange(desc(abs(NES))) %>%
+          dplyr::pull(Description_clean)
+      } else {
+        hallmark_order <- character(0)
+      }
+
+      if ("GO" %in% names(plot_data_list)) {
+        go_order <- plot_data_list[["GO"]] %>%
+          dplyr::arrange(desc(abs(NES))) %>%
+          dplyr::pull(Description_clean)
+      } else {
+        go_order <- character(0)
+      }
+
+      combined_data$Description_clean <- factor(combined_data$Description_clean,
+        levels = c(hallmark_order, go_order))
+
+      # Create the plot
+      p <- ggplot(combined_data, aes(x = NES, y = Description_clean)) +
+        geom_vline(xintercept = 0, linetype = "solid", color = "gray80") +
+        geom_segment(aes(y = Description_clean, yend = Description_clean, x = 0, xend = NES),
+          color = "black", linewidth = 0.5) +
+        geom_point(aes(
+          size = setSize,
+          fill = -log10(p.adjust)
+        ),
+        shape = 21,
+        color = "black",
+        stroke = 0.5) +
+        facet_wrap(~GeneSet, scales = "free_y", nrow = 1) +
+        scale_fill_gradient2(
+          low = "lightblue",
+          mid = "white",
+          high = "red",
+          midpoint = -log10(0.05),  # White at significance threshold
+          name = "-log10(Adj.P)",
+          guide = guide_colorbar(title.position = "top")
+        ) +
+        scale_size_continuous(
+          name = "Gene Set Size",
+          range = c(2, 8)
+        ) +
+        labs(
+          x = "Normalized Enrichment Score (NES)",
+          y = "",
+          title = paste0(comparison_name, ": Hallmark and GO Gene Sets")
+        ) +
+        theme_bw() +
+        theme(
+          strip.background = element_rect(fill = "white", color = "black", linewidth = 1),
+          strip.text = element_text(face = "bold", size = 14),
+          plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+          axis.text.y = element_text(size = 10),
+          axis.text.x = element_text(size = 12),
+          axis.title.x = element_text(size = 14),
+          axis.title.y = element_text(size = 14),
+          legend.position = "right",
+          panel.grid.minor = element_blank(),
+          panel.grid.major.x = element_line(color = "gray95"),
+          panel.grid.major.y = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, linewidth = 1)
+        )
+
+      # Add facetted scales if we have both gene sets
+      if (length(unique(combined_data$GeneSet)) > 1) {
+        p <- p + ggh4x::facetted_pos_scales(
+          y = list(
+            scale_y_discrete(position = "left"),   # First facet on left
+            scale_y_discrete(position = "right")   # Second facet on right
+          )
+        )
+      }
+
+      return(list(plot = p, data = combined_data, comparison = comparison_name,
+        hallmark_gsea = hallmark_gsea, go_gsea = go_gsea))
+
+    },
+    error = function(e) {
+      cat("Error in GSEA for", comparison_name, ":", e$message, "\n")
+      return(NULL)
+    })
+}
+
+# Run GSEA for all two-group comparisons
+gsea_results <- list()
+
+for (comp_name in names(comparisons)) {
+  cat("\n=== Processing", comp_name, "===\n")
+
+  result <- create_combined_gsea(comp_name, comparisons[[comp_name]])
+
+  if (!is.null(result)) {
+    gsea_results[[comp_name]] <- result
+
+    # Save the plot
+    pdf_filename <- file.path(plotDir, paste0("GSEA_", comp_name, ".pdf"))
+    png_filename <- file.path(plotDir, paste0("GSEA_", comp_name, ".png"))
+
+    # Save PDF
+    pdf(pdf_filename, width = 18, height = 8)
+    print(result$plot)
+    dev.off()
+
+    # Save PNG
+    png(png_filename, width = 18, height = 8, units = "in", res = 600)
+    print(result$plot)
+    dev.off()
+
+    cat("Saved plots for", comp_name, "\n")
+
+    # Save GSEA results as CSV
+    if (!is.null(result$hallmark_gsea) && nrow(result$hallmark_gsea@result) > 0) {
+      write.csv(result$hallmark_gsea@result,
+        file = file.path(outputDataDir, paste0("GSEA_Hallmark_", comp_name, ".csv")),
+        row.names = FALSE)
+    }
+
+    if (!is.null(result$go_gsea) && nrow(result$go_gsea@result) > 0) {
+      write.csv(result$go_gsea@result,
+        file = file.path(outputDataDir, paste0("GSEA_GO_", comp_name, ".csv")),
+        row.names = FALSE)
+    }
+  }
+}
+
+cat("\n=== GSEA Analysis Complete ===\n")
+cat("Total comparisons processed:", length(gsea_results), "\n")
+cat("Results saved to:", plotDir, "\n")
 ```
 
 
@@ -801,7 +1424,7 @@ shared_pairs <- list(
 
 # Create heatmaps for each shared DEG set
 for (pair in shared_pairs) {
-  cat("Creating heatmap for shared DEGs:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
+  cat("Creating heatmaps for shared DEGs:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
 
   # Read the Excel file with shared DEGs
   xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".xlsx"))
@@ -828,8 +1451,18 @@ for (pair in shared_pairs) {
   # Z-score scale the expression data by gene (row-wise)
   expr_data_scaled <- t(scale(t(expr_data)))
 
+  # Define relevant treatment groups for this comparison
+  # For each stimulation, include: base stim, stim_3G9, stim_antiTGFb, and NoTx
+  relevant_treatments <- c(pair$stim, paste0(pair$stim, "_3G9"), paste0(pair$stim, "_antiTGFb"), "NoTx")
+
+  # Get libraries for version b (only those involved in this specific comparison)
+  libs_subset <- annotatedMetricsQC$libid[annotatedMetricsQC$treatment %in% relevant_treatments]
+  anno_subset <- annotatedMetricsQC[annotatedMetricsQC$libid %in% libs_subset, ]
+
+  # === VERSION A: All libraries ===
+
   # Create column annotation based on treatment and stimulation
-  col_ann <- HeatmapAnnotation(
+  col_ann_a <- HeatmapAnnotation(
     Treatment = annotatedMetricsQC$treatment,
     Stimulation = annotatedMetricsQC$stimulation,
     col = list(
@@ -844,15 +1477,18 @@ for (pair in shared_pairs) {
   )
 
   # Order columns by stimulation, then by treatment within stimulation
-  col_order <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
-  expr_data_ordered <- expr_data_scaled[, col_order, drop = FALSE]
+  col_order_a <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
+  expr_data_ordered_a <- expr_data_scaled[, col_order_a, drop = FALSE]
 
-  # Create the heatmap
-  ht <- Heatmap(
-    expr_data_ordered,
+  # Set dynamic color range
+  z_range_a <- range(expr_data_ordered_a, na.rm = TRUE)
+  z_max_a <- max(abs(z_range_a))
+
+  # Create the heatmap version A
+  ht_a <- Heatmap(
+    expr_data_ordered_a,
     name = "Z-score",
-    col = colorRamp2(c(min(expr_data_ordered), 0, max(expr_data_ordered)),
-      c("blue", "white", "red")),
+    col = colorRamp2(c(-z_max_a, 0, z_max_a), c("blue", "white", "red")),
 
     # Row settings - cluster genes but don't show gene names
     show_row_names = FALSE,
@@ -860,16 +1496,16 @@ for (pair in shared_pairs) {
     row_dend_width = unit(10, "mm"),
 
     # Column settings - group by stimulation, cluster within groups
-    column_split = annotatedMetricsQC$stimulation[col_order],
+    column_split = annotatedMetricsQC$stimulation[col_order_a],
     cluster_columns = TRUE,
     cluster_column_slices = FALSE,
     column_gap = unit(2, "mm"),
-    show_column_names = TRUE,
-    column_names_gp = gpar(fontsize = 8),
+    show_column_names = FALSE,
+    column_names_gp = gpar(fontsize = 10),
     column_names_rot = 45,
 
     # Add column annotation
-    top_annotation = col_ann,
+    top_annotation = col_ann_a,
 
     # Heatmap body settings
     heatmap_legend_param = list(
@@ -882,27 +1518,105 @@ for (pair in shared_pairs) {
     # Overall settings
     row_title = paste0("Shared DEGs (n=", nrow(shared_genes), ")"),
     row_title_gp = gpar(fontsize = 12),
-    column_title = paste0(pair$stim, ": Shared DEGs between ", pair$label1, " and ", pair$label2, " effects"),
+    column_title = paste0(pair$stim, ": Shared DEGs between ", pair$label1, " and ", pair$label2, " effects (All Libraries)"),
     column_title_gp = gpar(fontsize = 14, fontface = "bold")
   )
 
-  # Save the heatmap as PDF
-  pdf_filename <- file.path(plotDir, paste0("heatmap_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  # Save the heatmap version A as PDF
+  pdf_filename_a <- file.path(plotDir, paste0("heatmap_a_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
 
-  pdf(pdf_filename, width = 12, height = 8)
-  draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
+  pdf(pdf_filename_a, width = 12, height = 8)
+  draw(ht_a, heatmap_legend_side = "right", annotation_legend_side = "right")
   dev.off()
 
-  cat("Saved heatmap:", pdf_filename, "\n\n")
+  cat("Saved heatmap A:", pdf_filename_a, "\n")
+
+  # === VERSION B: Only comparison-relevant libraries ===
+
+  # Subset expression data to relevant libraries and re-scale
+  expr_data_subset <- expr_data_scaled[, libs_subset, drop = FALSE]
+  expr_data_subset_scaled <- t(scale(t(expr_data_subset)))  # Re-scale for subset
+
+  # Create column annotation for subset
+  col_ann_b <- HeatmapAnnotation(
+    Treatment = anno_subset$treatment,
+    Stimulation = anno_subset$stimulation,
+    col = list(
+      Treatment = palTreatment,
+      Stimulation = palStimulation
+    ),
+    annotation_name_gp = gpar(fontsize = 10),
+    annotation_legend_param = list(
+      Treatment = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10)),
+      Stimulation = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10))
+    )
+  )
+
+  # Order columns by stimulation, then by treatment within stimulation
+  col_order_b <- order(anno_subset$stimulation, anno_subset$treatment)
+  expr_data_ordered_b <- expr_data_subset_scaled[, col_order_b, drop = FALSE]
+
+  # Set dynamic color range
+  z_range_b <- range(expr_data_ordered_b, na.rm = TRUE)
+  z_max_b <- max(abs(z_range_b))
+
+  # Create the heatmap version B
+  ht_b <- Heatmap(
+    expr_data_ordered_b,
+    name = "Z-score",
+    col = colorRamp2(c(-z_max_b, 0, z_max_b), c("blue", "white", "red")),
+
+    # Row settings - cluster genes but don't show gene names
+    show_row_names = FALSE,
+    cluster_rows = TRUE,
+    row_dend_width = unit(10, "mm"),
+
+    # Column settings - group by stimulation, cluster within groups
+    column_split = anno_subset$stimulation[col_order_b],
+    cluster_columns = TRUE,
+    cluster_column_slices = FALSE,
+    column_gap = unit(2, "mm"),
+    show_column_names = FALSE,
+    column_names_gp = gpar(fontsize = 10),
+    column_names_rot = 45,
+
+    # Add column annotation
+    top_annotation = col_ann_b,
+
+    # Heatmap body settings
+    heatmap_legend_param = list(
+      title = "Z-score",
+      title_gp = gpar(fontsize = 12),
+      labels_gp = gpar(fontsize = 10),
+      legend_height = unit(4, "cm")
+    ),
+
+    # Overall settings
+    row_title = paste0("Shared DEGs (n=", nrow(shared_genes), ")"),
+    row_title_gp = gpar(fontsize = 12),
+    column_title = paste0(pair$stim, ": Shared DEGs between ", pair$label1, " and ", pair$label2, " effects (Comparison Libraries Only)"),
+    column_title_gp = gpar(fontsize = 14, fontface = "bold")
+  )
+
+  # Save the heatmap version B as PDF
+  pdf_filename_b <- file.path(plotDir, paste0("heatmap_b_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+
+  pdf(pdf_filename_b, width = 10, height = 8)
+  draw(ht_b, heatmap_legend_side = "right", annotation_legend_side = "right")
+  dev.off()
+
+  cat("Saved heatmap B:", pdf_filename_b, "\n\n")
 }
 
-cat("Completed all shared DEG heatmaps\n")
+cat("Completed all shared DEG heatmaps (A and B versions)\n")
+
+# ============================version with just top 50 genes============================================================
 
 # Create second version of heatmaps: Top 50 genes by adj.P.Val with gene names labeled
-cat("Creating top 50 gene heatmaps with gene labels...\n")
+cat("Creating top 50 gene heatmaps with gene labels (A and B versions)...\n")
 
 for (pair in shared_pairs) {
-  cat("Creating top 50 gene heatmap for:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
+  cat("Creating top 50 gene heatmaps for:", pair$stim, "comparing", pair$label1, "vs", pair$label2, "\n")
 
   # Read the Excel file with shared DEGs
   xlsx_filename <- file.path(outputDataDir, paste0("venn_categories_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".xlsx"))
@@ -938,8 +1652,17 @@ for (pair in shared_pairs) {
   # Z-score scale the expression data by gene (row-wise)
   expr_data_top50_scaled <- t(scale(t(expr_data_top50)))
 
+  # Define relevant treatment groups for this comparison
+  relevant_treatments <- c(pair$stim, paste0(pair$stim, "_3G9"), paste0(pair$stim, "_antiTGFb"), "NoTx")
+
+  # Get libraries for version b (only those involved in this specific comparison)
+  libs_subset <- annotatedMetricsQC$libid[annotatedMetricsQC$treatment %in% relevant_treatments]
+  anno_subset <- annotatedMetricsQC[annotatedMetricsQC$libid %in% libs_subset, ]
+
+  # === VERSION A: All libraries (Top 50 with gene names) ===
+
   # Create column annotation based on treatment and stimulation
-  col_ann_top50 <- HeatmapAnnotation(
+  col_ann_top50_a <- HeatmapAnnotation(
     Treatment = annotatedMetricsQC$treatment,
     Stimulation = annotatedMetricsQC$stimulation,
     col = list(
@@ -954,33 +1677,36 @@ for (pair in shared_pairs) {
   )
 
   # Order columns by stimulation, then by treatment within stimulation
-  col_order <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
-  expr_data_top50_ordered <- expr_data_top50_scaled[, col_order, drop = FALSE]
+  col_order_top50_a <- order(annotatedMetricsQC$stimulation, annotatedMetricsQC$treatment)
+  expr_data_top50_ordered_a <- expr_data_top50_scaled[, col_order_top50_a, drop = FALSE]
 
-  # Create the heatmap with gene names labeled
-  ht_top50 <- Heatmap(
-    expr_data_top50_ordered,
+  # Set dynamic color range
+  z_range_top50_a <- range(expr_data_top50_ordered_a, na.rm = TRUE)
+  z_max_top50_a <- max(abs(z_range_top50_a))
+
+  # Create the heatmap with gene names labeled - Version A
+  ht_top50_a <- Heatmap(
+    expr_data_top50_ordered_a,
     name = "Z-score",
-    col = colorRamp2(c(min(expr_data_top50_ordered), 0, max(expr_data_top50_ordered)),
-      c("blue", "white", "red")),
+    col = colorRamp2(c(-z_max_top50_a, 0, z_max_top50_a), c("blue", "white", "red")),
 
     # Row settings - cluster genes and show gene names
     show_row_names = TRUE,
-    row_names_gp = gpar(fontsize = 8),
+    row_names_gp = gpar(fontsize = 10),
     cluster_rows = TRUE,
     row_dend_width = unit(10, "mm"),
 
     # Column settings - group by stimulation, cluster within groups
-    column_split = annotatedMetricsQC$stimulation[col_order],
+    column_split = annotatedMetricsQC$stimulation[col_order_top50_a],
     cluster_columns = TRUE,
     cluster_column_slices = FALSE,
     column_gap = unit(2, "mm"),
-    show_column_names = TRUE,
-    column_names_gp = gpar(fontsize = 8),
+    show_column_names = FALSE,
+    column_names_gp = gpar(fontsize = 10),
     column_names_rot = 45,
 
     # Add column annotation
-    top_annotation = col_ann_top50,
+    top_annotation = col_ann_top50_a,
 
     # Heatmap body settings
     heatmap_legend_param = list(
@@ -993,21 +1719,98 @@ for (pair in shared_pairs) {
     # Overall settings
     row_title = paste0("Top ", nrow(shared_genes_top50), " Shared DEGs (by adj.P.Val)"),
     row_title_gp = gpar(fontsize = 12),
-    column_title = paste0(pair$stim, ": Top Shared DEGs between ", pair$label1, " and ", pair$label2, " effects"),
+    column_title = paste0(pair$stim, ": Top Shared DEGs between ", pair$label1, " and ", pair$label2, " effects (All Libraries)"),
     column_title_gp = gpar(fontsize = 14, fontface = "bold")
   )
 
-  # Save the top 50 heatmap as PDF
-  pdf_filename_top50 <- file.path(plotDir, paste0("heatmap_top50_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+  # Save the top 50 heatmap version A as PDF
+  pdf_filename_top50_a <- file.path(plotDir, paste0("heatmap_a_top50_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
 
-  pdf(pdf_filename_top50, width = 14, height = 10)
-  draw(ht_top50, heatmap_legend_side = "right", annotation_legend_side = "right")
+  pdf(pdf_filename_top50_a, width = 14, height = 10)
+  draw(ht_top50_a, heatmap_legend_side = "right", annotation_legend_side = "right")
   dev.off()
 
-  cat("Saved top 50 heatmap:", pdf_filename_top50, "\n\n")
+  cat("Saved top 50 heatmap A:", pdf_filename_top50_a, "\n")
+
+  # === VERSION B: Only comparison-relevant libraries (Top 50 with gene names) ===
+
+  # Subset expression data to relevant libraries and re-scale
+  expr_data_top50_subset <- expr_data_top50_scaled[, libs_subset, drop = FALSE]
+  expr_data_top50_subset_scaled <- t(scale(t(expr_data_top50_subset)))  # Re-scale for subset
+
+  # Create column annotation for subset
+  col_ann_top50_b <- HeatmapAnnotation(
+    Treatment = anno_subset$treatment,
+    Stimulation = anno_subset$stimulation,
+    col = list(
+      Treatment = palTreatment,
+      Stimulation = palStimulation
+    ),
+    annotation_name_gp = gpar(fontsize = 10),
+    annotation_legend_param = list(
+      Treatment = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10)),
+      Stimulation = list(title_gp = gpar(fontsize = 12), labels_gp = gpar(fontsize = 10))
+    )
+  )
+
+  # Order columns by stimulation, then by treatment within stimulation
+  col_order_top50_b <- order(anno_subset$stimulation, anno_subset$treatment)
+  expr_data_top50_ordered_b <- expr_data_top50_subset_scaled[, col_order_top50_b, drop = FALSE]
+
+  # Set dynamic color range
+  z_range_top50_b <- range(expr_data_top50_ordered_b, na.rm = TRUE)
+  z_max_top50_b <- max(abs(z_range_top50_b))
+
+  # Create the heatmap with gene names labeled - Version B
+  ht_top50_b <- Heatmap(
+    expr_data_top50_ordered_b,
+    name = "Z-score",
+    col = colorRamp2(c(-z_max_top50_b, 0, z_max_top50_b), c("blue", "white", "red")),
+
+    # Row settings - cluster genes and show gene names
+    show_row_names = TRUE,
+    row_names_gp = gpar(fontsize = 10),
+    cluster_rows = TRUE,
+    row_dend_width = unit(10, "mm"),
+
+    # Column settings - group by stimulation, cluster within groups
+    column_split = anno_subset$stimulation[col_order_top50_b],
+    cluster_columns = TRUE,
+    cluster_column_slices = FALSE,
+    column_gap = unit(2, "mm"),
+    show_column_names = FALSE,
+    column_names_gp = gpar(fontsize = 10),
+    column_names_rot = 45,
+
+    # Add column annotation
+    top_annotation = col_ann_top50_b,
+
+    # Heatmap body settings
+    heatmap_legend_param = list(
+      title = "Z-score",
+      title_gp = gpar(fontsize = 12),
+      labels_gp = gpar(fontsize = 10),
+      legend_height = unit(4, "cm")
+    ),
+
+    # Overall settings
+    row_title = paste0("Top ", nrow(shared_genes_top50), " Shared DEGs (by adj.P.Val)"),
+    row_title_gp = gpar(fontsize = 12),
+    column_title = paste0(pair$stim, ": Top Shared DEGs between ", pair$label1, " and ", pair$label2, " effects (Comparison Libraries Only)"),
+    column_title_gp = gpar(fontsize = 14, fontface = "bold")
+  )
+
+  # Save the top 50 heatmap version B as PDF
+  pdf_filename_top50_b <- file.path(plotDir, paste0("heatmap_b_top50_shared_DEGs_", pair$stim, "_", pair$label1, "_vs_", pair$label2, ".pdf"))
+
+  pdf(pdf_filename_top50_b, width = 12, height = 10)
+  draw(ht_top50_b, heatmap_legend_side = "right", annotation_legend_side = "right")
+  dev.off()
+
+  cat("Saved top 50 heatmap B:", pdf_filename_top50_b, "\n\n")
 }
 
-cat("Completed all top 50 shared DEG heatmaps with gene labels\n")
+cat("Completed all top 50 shared DEG heatmaps with gene labels (A and B versions)\n")
 ```
 
 ```{r stimulationSpecificSignaturesAlteredBy3G9_OR_antiTGFb}
@@ -1177,3 +1980,6 @@ for (pair in modifier_effect_pairs) {
   cat("Completed analysis for:", pair$label1, "vs", pair$label2, "\n")
 }
 ```
+
+
+
