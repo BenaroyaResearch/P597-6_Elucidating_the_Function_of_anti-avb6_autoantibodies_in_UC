@@ -54,6 +54,7 @@ rsconnect/
 # Ignore MacOS files
 .DS_Store
 ~$*
+data/.DS_Store
 
 # Ignore temporary files
 *.tmp
@@ -70,3 +71,5 @@ rsconnect/
 data/outputData/
 figures/
 documents/notes/
+data/.DS_Store
+.DS_Store
