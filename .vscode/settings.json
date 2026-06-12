@@ -1,0 +1,9 @@
+{
+  // Frozen on R 4.3.1 / Bioconductor 3.18 — pin the VSCode R extension to R 4.3
+  // for this workspace only. The wrappers (~/.local/bin/*-4.3) set R_HOME to the
+  // 4.3 framework and re-point R_PROFILE_USER so renv + the vscode-R session
+  // watcher both load. All other projects use the global default (R 4.6).
+  "r.rterm.mac": "/Users/tedwards/.local/bin/radian-4.3",
+  "r.rpath.mac": "/Users/tedwards/.local/bin/R-4.3",
+  "r.bracketedPaste": true
+}
